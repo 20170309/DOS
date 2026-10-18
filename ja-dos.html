@@ -1,0 +1,1514 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JA-DOS</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #000;
+            color: #ccc;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 14px;
+            line-height: 1.4;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        #screen {
+            width: 100%;
+            height: 100%;
+            padding: 8px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        #screen::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        #screen::-webkit-scrollbar-track {
+            background: #111;
+        }
+
+        #screen::-webkit-scrollbar-thumb {
+            background: #444;
+        }
+
+        .prompt-line {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .prompt {
+            color: #0f0;
+            margin-right: 4px;
+        }
+
+        .input-area {
+            display: flex;
+            align-items: center;
+            flex: 1;
+            min-width: 100px;
+        }
+
+        #cmdInput {
+            background: transparent;
+            border: none;
+            color: #ccc;
+            font-family: inherit;
+            font-size: inherit;
+            outline: none;
+            flex: 1;
+            caret-color: #0f0;
+        }
+
+        .output {
+            color: #ccc;
+        }
+
+        .output.error {
+            color: #f44;
+        }
+
+        .output.success {
+            color: #0f0;
+        }
+
+        .output.info {
+            color: #88f;
+        }
+
+        .output.warning {
+            color: #fa0;
+        }
+
+        .blink {
+            animation: blink 1s step-end infinite;
+        }
+
+        @keyframes blink {
+            50% { opacity: 0; }
+        }
+
+        /* 吃豆人游戏样式 */
+        #pacman-game {
+            display: none;
+            margin: 10px 0;
+        }
+
+        #pacman-canvas {
+            border: 2px solid #00f;
+            display: block;
+            margin: 0 auto;
+        }
+
+        .game-info {
+            text-align: center;
+            color: #ff0;
+            margin: 5px 0;
+        }
+
+        .game-controls {
+            text-align: center;
+            color: #888;
+            margin: 5px 0;
+        }
+
+        /* ASCII 艺术 */
+        .ascii-art {
+            color: #0f0;
+            line-height: 1.2;
+        }
+
+        /* 文件列表 */
+        .file-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+            gap: 4px;
+        }
+
+        .file-item {
+            padding: 2px 4px;
+        }
+
+        .file-item.dir {
+            color: #88f;
+        }
+
+        .file-item.file {
+            color: #ccc;
+        }
+
+        .file-item.exe {
+            color: #0f0;
+        }
+
+        /* 颜色代码 */
+        .c-red { color: #f44; }
+        .c-green { color: #0f0; }
+        .c-yellow { color: #ff0; }
+        .c-blue { color: #44f; }
+        .c-magenta { color: #f4f; }
+        .c-cyan { color: #4ff; }
+        .c-white { color: #fff; }
+    </style>
+</head>
+<body>
+    <div id="screen"></div>
+
+    <div id="pacman-game">
+        <div class="game-info">=== PACMAN === | 分数: <span id="score">0</span> | 生命: <span id="lives">3</span></div>
+        <canvas id="pacman-canvas" width="560" height="620"></canvas>
+        <div class="game-controls">使用方向键或 WASD 移动 | Q 退出游戏</div>
+    </div>
+
+<script>
+// ============================================================
+// JA-DOS 模拟器 - 核心系统
+// ============================================================
+
+class JADOS {
+    constructor() {
+        this.screen = document.getElementById('screen');
+        this.pacmanGame = document.getElementById('pacman-game');
+        this.pacmanCanvas = document.getElementById('pacman-canvas');
+        this.currentDir = 'C:\\\\JA-DOS';
+        this.drive = 'C';
+        this.commandHistory = [];
+        this.historyIndex = -1;
+        this.inGame = false;
+        this.paused = false;
+        this.initFileSystem();
+        this.initCommands();
+        this.boot();
+    }
+
+    // ========== 文件系统 ==========
+    initFileSystem() {
+        this.fs = {
+            'C:': {
+                type: 'dir',
+                children: {
+                    'JA-DOS': {
+                        type: 'dir',
+                        children: {
+                            'README.TXT': {
+                                type: 'file',
+                                size: 1024,
+                                content: '欢迎使用 JA-DOS 模拟器！\n\n这是一个基于 JavaScript 的 DOS 环境模拟器。\n\n可用命令：\n- HELP: 查看帮助\n- DIR: 列出文件\n- TYPE: 查看文件内容\n- PACMAN: 启动吃豆人游戏\n\n享受复古的乐趣吧！'
+                            },
+                            'CONFIG.SYS': {
+                                type: 'file',
+                                size: 256,
+                                content: 'DEVICE=HIMEM.SYS\nDOS=HIGH,UMB\nFILES=40\nBUFFERS=20'
+                            },
+                            'AUTOEXEC.BAT': {
+                                type: 'file',
+                                size: 128,
+                                content: '@ECHO OFF\nPROMPT $P$G\nPATH C:\\\\JA-DOS\\\;C:\\\\WINDOWS\\\;C:\\\\DOS'
+                            },
+                            'GAMES': {
+                                type: 'dir',
+                                children: {
+                                    'PACMAN.EXE': { type: 'file', size: 16384, exe: true },
+                                    'TETRIS.EXE': { type: 'file', size: 8192, exe: true },
+                                    'SNAKE.EXE': { type: 'file', size: 4096, exe: true }
+                                }
+                            },
+                            'DOCS': {
+                                type: 'dir',
+                                children: {
+                                    'COMMANDS.TXT': {
+                                        type: 'file',
+                                        size: 2048,
+                                        content: this.getCommandsDoc()
+                                    },
+                                    'HISTORY.TXT': {
+                                        type: 'file',
+                                        size: 512,
+                                        content: 'JA-DOS 版本历史：\n\nv1.0 - 初始版本\nv1.1 - 添加吃豆人游戏\nv1.2 - 添加更多命令\nv2.1 - 当前版本'
+                                    }
+                                }
+                            },
+                            'BIN': {
+                                type: 'dir',
+                                children: {
+                                    'FORMAT.COM': { type: 'file', size: 2048, exe: true },
+                                    'DISKCOPY.COM': { type: 'file', size: 3072, exe: true }
+                                }
+                            },
+                            'HELLO.TXT': {
+                                type: 'file',
+                                size: 64,
+                                content: 'Hello, JA-DOS world!'
+                            }
+                        }
+                    },
+                    'WINDOWS': {
+                        type: 'dir',
+                        children: {
+                            'SYSTEM': {
+                                type: 'dir',
+                                children: {
+                                    'KERNEL32.DLL': { type: 'file', size: 524288 },
+                                    'USER32.DLL': { type: 'file', size: 262144 },
+                                    'GDI32.DLL': { type: 'file', size: 131072 }
+                                }
+                            },
+                            'NOTEPAD.EXE': { type: 'file', size: 32768, exe: true },
+                            'CALC.EXE': { type: 'file', size: 16384, exe: true }
+                        }
+                    },
+                    'DOS': {
+                        type: 'dir',
+                        children: {
+                            'COMMAND.COM': { type: 'file', size: 47545, exe: true },
+                            'IO.SYS': { type: 'file', size: 33430 },
+                            'MSDOS.SYS': { type: 'file', size: 37394 }
+                        }
+                    }
+                }
+            }
+        };
+    }
+
+    getCommandsDoc() {
+        return `JA-DOS 命令参考手册
+========================
+
+文件命令：
+  DIR [路径]     - 列出目录内容
+  CD [目录]      - 切换目录
+  TYPE 文件名    - 显示文件内容
+  COPY 源 目标   - 复制文件
+  DEL 文件名     - 删除文件
+  MD 目录名      - 创建目录
+  RD 目录名      - 删除目录
+  REN 旧名 新名  - 重命名文件
+  TREE           - 显示目录树
+
+系统命令：
+  CLS            - 清屏
+  DATE           - 显示日期
+  TIME           - 显示时间
+  VER            - 显示版本
+  ECHO [文本]    - 输出文本
+  PROMPT [格式]  - 设置提示符
+  PATH           - 显示/设置路径
+  SET [变量]     - 显示/设置环境变量
+
+  程序命令：
+  PACMAN         - 启动吃豆人游戏
+
+其他命令：
+  HELP [命令]    - 显示帮助
+  ?              - 快捷帮助
+  EXIT           - 关闭系统`;
+    }
+
+    // ========== 启动画面 ==========
+    boot() {
+        const bootText = `
+${this.colorize('╔══════════════════════════════════════════╗', 'green')}
+${this.colorize('║', 'green')}                                          ${this.colorize('║', 'green')}
+${this.colorize('║', 'green')}      ██╗ █████╗      ██████╗  ██████╗ ███████╗${this.colorize('║', 'green')}
+${this.colorize('║', 'green')}      ██║██╔══██╗     ██╔══██╗██╔═══██╗██╔════╝${this.colorize('║', 'green')}
+${this.colorize('║', 'green')}      ██║███████║     ██║  ██║██║   ██║███████╗${this.colorize('║', 'green')}
+${this.colorize('║', 'green')} ██   ██║██╔══██║     ██║  ██║██║   ██║╚════██║${this.colorize('║', 'green')}
+${this.colorize('║', 'green')} ╚█████╔╝██║  ██║█████████████╔╝╚██████╔╝███████║${this.colorize('║', 'green')}
+${this.colorize('║', 'green')}  ╚════╝ ╚═╝  ╚═╝╚══════╚═════╝  ╚═════╝ ╚══════╝${this.colorize('║', 'green')}
+${this.colorize('║', 'green')}                                          ${this.colorize('║', 'green')}
+${this.colorize('╚══════════════════════════════════════════╝', 'green')}
+
+${this.colorize('weclom.JA-DOS', 'yellow')} 版本 2.1
+版权所有 (C) 2024 JA-SOFT.
+
+BIOS 日期 10/18/26 12:00:00
+CPU: JA-8086 8MHz
+内存测试: 640K OK
+
+`;
+        this.print(bootText);
+
+        // 模拟启动延迟
+        let lines = [
+            '正在加载 HIMEM.SYS...',
+            '正在加载 EMM386.EXE...',
+            '正在处理 CONFIG.SYS...',
+            '正在处理 AUTOEXEC.BAT...',
+            '设置环境变量...',
+            '系统启动完成。'
+        ];
+
+        let i = 0;
+        const loadNext = () => {
+            if (i < lines.length) {
+                this.print(lines[i] + '\n');
+                i++;
+                setTimeout(loadNext, 200);
+            } else {
+                this.print('\n');
+                this.showPrompt();
+            }
+        };
+        setTimeout(loadNext, 500);
+    }
+
+    // ========== 命令系统 ==========
+    initCommands() {
+        this.commands = {
+            'help': (args) => this.cmdHelp(args),
+            '?': (args) => this.cmdHelp(args),
+            'dir': (args) => this.cmdDir(args),
+            'cd': (args) => this.cmdCd(args),
+            'type': (args) => this.cmdType(args),
+            'copy': (args) => this.cmdCopy(args),
+            'del': (args) => this.cmdDel(args),
+            'md': (args) => this.cmdMd(args),
+            'rd': (args) => this.cmdRd(args),
+            'ren': (args) => this.cmdRen(args),
+            'cls': (args) => this.cmdCls(args),
+            'date': (args) => this.cmdDate(args),
+            'time': (args) => this.cmdTime(args),
+            'ver': (args) => this.cmdVer(args),
+            'echo': (args) => this.cmdEcho(args),
+            'prompt': (args) => this.cmdPrompt(args),
+            'path': (args) => this.cmdPath(args),
+            'set': (args) => this.cmdSet(args),
+            'tree': (args) => this.cmdTree(args),
+            'pacman': (args) => this.cmdPacman(args),
+            'edit': (args) => this.cmdEdit(args),
+            'format': (args) => this.cmdFormat(args),
+            'mem': (args) => this.cmdMem(args),
+            'chkdsk': (args) => this.cmdChkdsk(args),
+            'vol': (args) => this.cmdVol(args),
+            'label': (args) => this.cmdLabel(args),
+            'exit': (args) => this.cmdExit(args)
+        };
+
+        this.env = {
+            'PATH': 'C:\\\\JA-DOS\\\;C:\\\\WINDOWS\\\;C:\\\\DOS',
+            'PROMPT': '$P$G',
+            'TEMP': 'C:\\\\TEMP',
+            'JA_DOS_VER': '2.1'
+        };
+    }
+
+    cmdHelp(args) {
+        if (args.length > 0) {
+            const cmd = args[0].toLowerCase();
+            const helpTexts = {
+                'dir': 'DIR [路径] [/W] [/P]\n  列出目录中的文件和子目录。\n  /W - 宽格式显示\n  /P - 分页显示',
+                'cd': 'CD [目录名] 或 CHDIR [目录名]\n  显示或更改当前目录。\n  CD.. - 返回上级目录\n  CD\\ - 返回根目录',
+                'type': 'TYPE 文件名\n  显示文本文件的内容。',
+                'copy': 'COPY 源文件 目标文件\n  复制一个或多个文件。',
+                'del': 'DEL 文件名 或 ERASE 文件名\n  删除一个或多个文件。',
+                'md': 'MD 目录名 或 MKDIR 目录名\n  创建新目录。',
+                'rd': 'RD 目录名 或 RMDIR 目录名\n  删除空目录。',
+                'ren': 'REN 旧文件名 新文件名\n  重命名文件。',
+                'cls': 'CLS\n  清除屏幕。',
+                'date': 'DATE\n  显示或设置日期。',
+                'time': 'TIME\n  显示或设置时间。',
+                'ver': 'VER\n  显示 JA-DOS 版本号。',
+                'echo': 'ECHO [文本]\n  显示消息，或开关命令回显。',
+                'prompt': 'PROMPT [格式]\n  更改命令提示符。\n  $P - 当前路径\n  $G - > 符号\n  $T - 时间',
+                'path': 'PATH [路径]\n  显示或设置可执行文件的搜索路径。',
+                'set': 'SET [变量=[值]]\n  显示或设置环境变量。',
+                'tree': 'TREE [路径]\n  以图形方式显示目录结构。',
+                'pacman': 'PACMAN\n  启动吃豆人小游戏。\n  使用方向键或 WASD 控制移动。',
+                'mem': 'MEM\n  显示内存使用情况。',
+                'vol': 'VOL [驱动器:]\n  显示磁盘卷标。',
+                'exit': 'EXIT\n  退出 JA-DOS。'
+            };
+            if (helpTexts[cmd]) {
+                this.print(helpTexts[cmd] + '\n');
+            } else {
+                this.print(`未找到命令 "${args[0]}" 的帮助信息。\n`, 'error');
+            }
+            return;
+        }
+
+        const helpText = `
+${this.colorize('╔══════════════════════════════════════════════════════════════╗', 'green')}
+${this.colorize('║', 'green')}                     JA-DOS 帮助系统                          ${this.colorize('║', 'green')}
+${this.colorize('╠══════════════════════════════════════════════════════════════╣', 'green')}
+${this.colorize('║', 'green')}  文件命令:                                                   ${this.colorize('║', 'green')}
+${this.colorize('║', 'green')}    DIR      列出目录内容    TYPE     显示文件内容            ${this.colorize('║', 'green')}
+${this.colorize('║', 'green')}    CD       切换目录        COPY     复制文件               ${this.colorize('║', 'green')}
+${this.colorize('║', 'green')}    DEL      删除文件        MD       创建目录               ${this.colorize('║', 'green')}
+${this.colorize('║', 'green')}    RD       删除目录        REN      重命名文件             ${this.colorize('║', 'green')}
+${this.colorize('║', 'green')}    TREE     显示目录树                                       ${this.colorize('║', 'green')}
+${this.colorize('║', 'green')}                                                              ${this.colorize('║', 'green')}
+${this.colorize('║', 'green')}  系统命令:                                                   ${this.colorize('║', 'green')}
+${this.colorize('║', 'green')}    CLS      清屏            DATE     显示日期               ${this.colorize('║', 'green')}
+${this.colorize('║', 'green')}    TIME     显示时间        VER      显示版本               ${this.colorize('║', 'green')}
+${this.colorize('║', 'green')}    ECHO     输出文本        PROMPT   设置提示符             ${this.colorize('║', 'green')}
+${this.colorize('║', 'green')}    PATH     设置路径        SET      环境变量               ${this.colorize('║', 'green')}
+${this.colorize('║', 'green')}    MEM      内存信息        CHKDSK   检查磁盘               ${this.colorize('║', 'green')}
+${this.colorize('║', 'green')}    VOL      显示卷标        LABEL    设置卷标               ${this.colorize('║', 'green')}
+${this.colorize('║', 'green')}                                                              ${this.colorize('║', 'green')}
+${this.colorize('║', 'green')}  程序命令:                                                   ${this.colorize('║', 'green')}
+${this.colorize('║', 'green')}    PACMAN   吃豆人游戏                                       ${this.colorize('║', 'green')}
+${this.colorize('║', 'green')}    EDIT     文本编辑器                                       ${this.colorize('║', 'green')}
+${this.colorize('║', 'green')}                                                              ${this.colorize('║', 'green')}
+${this.colorize('║', 'green')}  其他命令:                                                   ${this.colorize('║', 'green')}
+${this.colorize('║', 'green')}    HELP [命令]  查看详细帮助    ?     显示此帮助              ${this.colorize('║', 'green')}
+${this.colorize('║', 'green')}    EXIT         退出系统                                   ${this.colorize('║', 'green')}
+${this.colorize('╚══════════════════════════════════════════════════════════════╝', 'green')}
+
+输入 HELP 命令名 查看详细说明。
+`;
+        this.print(helpText);
+    }
+
+    cmdDir(args) {
+        const path = args.length > 0 ? this.resolvePath(args[0]) : this.currentDir;
+        const node = this.getNode(path);
+
+        if (!node) {
+            this.print(`找不到路径: ${path}\n`, 'error');
+            return;
+        }
+
+        if (node.type !== 'dir') {
+            this.print(`${path} 不是目录\n`, 'error');
+            return;
+        }
+
+        const now = new Date();
+        const dateStr = `${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}-${String(now.getFullYear()).slice(-2)}`;
+        const timeStr = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+
+        this.print(`\n 驱动器 ${this.drive}: 的卷标是 JA-DOS\n`);
+        this.print(` 目录: ${path}\n\n`);
+
+        let dirs = 0, files = 0;
+        let totalSize = 0;
+
+        // 上级目录
+        if (path !== `${this.drive}:` && path !== `${this.drive}:\\\\`) {
+            this.print(`${dateStr}  ${timeStr}    <DIR>          .\n`);
+            this.print(`${dateStr}  ${timeStr}    <DIR>          ..\n`);
+            dirs += 2;
+        }
+
+        for (const [name, item] of Object.entries(node.children || {})) {
+            if (item.type === 'dir') {
+                this.print(`${dateStr}  ${timeStr}    <DIR>          ${name}\n`);
+                dirs++;
+            } else {
+                const size = item.size || 0;
+                totalSize += size;
+                this.print(`${dateStr}  ${timeStr}    ${String(size).padStart(14, ' ')} ${name}\n`);
+                files++;
+            }
+        }
+
+        this.print(`              ${files} 个文件    ${totalSize.toLocaleString()} 字节\n`);
+        this.print(`              ${dirs} 个目录    剩余空间未知\n\n`);
+    }
+
+    cmdCd(args) {
+        if (args.length === 0) {
+            this.print(this.currentDir + '\n');
+            return;
+        }
+
+        let target = args[0];
+
+        if (target === '..') {
+            const parts = this.currentDir.split('\\\\').filter(p => p);
+            if (parts.length > 1) {
+                parts.pop();
+                this.currentDir = parts.join('\\\\');
+                if (!this.currentDir.endsWith(':')) this.currentDir += '\\\\';
+            }
+            return;
+        }
+
+        if (target === '\\\\') {
+            this.currentDir = `${this.drive}:\\\\JA-DOS`;
+            return;
+        }
+
+        const newPath = this.resolvePath(target);
+        const node = this.getNode(newPath);
+
+        if (!node) {
+            this.print(`系统找不到指定的路径。\n`, 'error');
+            return;
+        }
+
+        if (node.type !== 'dir') {
+            this.print(`目录名称无效。\n`, 'error');
+            return;
+        }
+
+        this.currentDir = newPath;
+    }
+
+    cmdType(args) {
+        if (args.length === 0) {
+            this.print('语法错误\n', 'error');
+            return;
+        }
+
+        const path = this.resolvePath(args[0]);
+        const node = this.getNode(path);
+
+        if (!node) {
+            this.print(`找不到文件: ${args[0]}\n`, 'error');
+            return;
+        }
+
+        if (node.type === 'dir') {
+            this.print(`无法显示目录内容\n`, 'error');
+            return;
+        }
+
+        if (node.content) {
+            this.print(node.content + '\n');
+        } else if (node.exe) {
+            this.print(`无法显示二进制文件\n`, 'error');
+        } else {
+            this.print(`(空文件)\n`);
+        }
+    }
+
+    cmdCopy(args) {
+        if (args.length < 2) {
+            this.print('语法: COPY 源文件 目标文件\n', 'error');
+            return;
+        }
+
+        const srcPath = this.resolvePath(args[0]);
+        const srcNode = this.getNode(srcPath);
+
+        if (!srcNode || srcNode.type !== 'file') {
+            this.print(`找不到文件: ${args[0]}\n`, 'error');
+            return;
+        }
+
+        const dstPath = this.resolvePath(args[1]);
+        const dstParent = this.getParentNode(dstPath);
+        const dstName = dstPath.split('\\\\').pop();
+
+        if (!dstParent) {
+            this.print('路径无效\n', 'error');
+            return;
+        }
+
+        dstParent.children[dstName] = JSON.parse(JSON.stringify(srcNode));
+        this.print(`已复制 1 个文件。\n`, 'success');
+    }
+
+    cmdDel(args) {
+        if (args.length === 0) {
+            this.print('语法: DEL 文件名\n', 'error');
+            return;
+        }
+
+        const path = this.resolvePath(args[0]);
+        const parent = this.getParentNode(path);
+        const name = path.split('\\\\').pop();
+
+        if (!parent || !parent.children[name]) {
+            this.print(`找不到文件: ${args[0]}\n`, 'error');
+            return;
+        }
+
+        if (parent.children[name].type === 'dir') {
+            this.print('无法删除目录，使用 RD 命令\n', 'error');
+            return;
+        }
+
+        delete parent.children[name];
+        this.print(`已删除文件: ${name}\n`, 'success');
+    }
+
+    cmdMd(args) {
+        if (args.length === 0) {
+            this.print('语法: MD 目录名\n', 'error');
+            return;
+        }
+
+        const path = this.resolvePath(args[0]);
+        const parent = this.getParentNode(path);
+        const name = path.split('\\\\').pop();
+
+        if (!parent) {
+            this.print('路径无效\n', 'error');
+            return;
+        }
+
+        if (parent.children[name]) {
+            this.print('目录已存在\n', 'error');
+            return;
+        }
+
+        parent.children[name] = { type: 'dir', children: {} };
+        this.print(`目录已创建: ${name}\n`, 'success');
+    }
+
+    cmdRd(args) {
+        if (args.length === 0) {
+            this.print('语法: RD 目录名\n', 'error');
+            return;
+        }
+
+        const path = this.resolvePath(args[0]);
+        const parent = this.getParentNode(path);
+        const name = path.split('\\\\').pop();
+
+        if (!parent || !parent.children[name]) {
+            this.print(`找不到目录: ${args[0]}\n`, 'error');
+            return;
+        }
+
+        if (parent.children[name].type !== 'dir') {
+            this.print('不是目录\n', 'error');
+            return;
+        }
+
+        const children = parent.children[name].children;
+        if (Object.keys(children).length > 0) {
+            this.print('目录不是空的\n', 'error');
+            return;
+        }
+
+        delete parent.children[name];
+        this.print(`目录已删除: ${name}\n`, 'success');
+    }
+
+    cmdRen(args) {
+        if (args.length < 2) {
+            this.print('语法: REN 旧文件名 新文件名\n', 'error');
+            return;
+        }
+
+        const srcPath = this.resolvePath(args[0]);
+        const parent = this.getParentNode(srcPath);
+        const oldName = srcPath.split('\\\\').pop();
+        const newName = args[1];
+
+        if (!parent || !parent.children[oldName]) {
+            this.print(`找不到文件: ${args[0]}\n`, 'error');
+            return;
+        }
+
+        if (parent.children[newName]) {
+            this.print('文件名已存在\n', 'error');
+            return;
+        }
+
+        parent.children[newName] = parent.children[oldName];
+        delete parent.children[oldName];
+        this.print(`已重命名: ${oldName} -> ${newName}\n`, 'success');
+    }
+
+    cmdCls(args) {
+        this.screen.innerHTML = '';
+    }
+
+    cmdDate(args) {
+        const now = new Date();
+        this.print(`当前日期: ${now.toLocaleDateString('zh-CN')}\n`);
+    }
+
+    cmdTime(args) {
+        const now = new Date();
+        this.print(`当前时间: ${now.toLocaleTimeString('zh-CN')}\n`);
+    }
+
+    cmdVer(args) {
+        this.print(`\nJA-DOS 版本 2.1 [Version 2.1.2026]\n`);
+        this.print(`版权所有 (C) 2024 JA-SOFT.\n\n`);
+    }
+
+    cmdEcho(args) {
+        if (args.length === 0) {
+            this.print('ECHO 处于打开状态。\n');
+        } else {
+            this.print(args.join(' ') + '\n');
+        }
+    }
+
+    cmdPrompt(args) {
+        if (args.length === 0) {
+            this.print('当前提示符: ' + this.env.PROMPT + '\n');
+        } else {
+            this.env.PROMPT = args.join(' ');
+            this.print('提示符已更改\n', 'success');
+        }
+    }
+
+    cmdPath(args) {
+        if (args.length === 0) {
+            this.print('PATH=' + this.env.PATH + '\n');
+        } else {
+            this.env.PATH = args.join(' ');
+            this.print('路径已设置\n', 'success');
+        }
+    }
+
+    cmdSet(args) {
+        if (args.length === 0) {
+            for (const [key, value] of Object.entries(this.env)) {
+                this.print(`${key}=${value}\n`);
+            }
+            return;
+        }
+
+        const arg = args.join(' ');
+        const eq = arg.indexOf('=');
+        if (eq === -1) {
+            const key = arg.toUpperCase();
+            if (this.env[key]) {
+                this.print(`${key}=${this.env[key]}\n`);
+            } else {
+                this.print(`环境变量 ${key} 未定义\n`, 'error');
+            }
+            return;
+        }
+
+        const key = arg.slice(0, eq).toUpperCase();
+        const value = arg.slice(eq + 1);
+        this.env[key] = value;
+        this.print(`${key}=${value}\n`, 'success');
+    }
+
+    cmdTree(args) {
+        const path = args.length > 0 ? this.resolvePath(args[0]) : this.currentDir;
+        const node = this.getNode(path);
+
+        if (!node || node.type !== 'dir') {
+            this.print('目录无效\n', 'error');
+            return;
+        }
+
+        this.print(`目录: ${path}\n`);
+        this.print(`${this.drive}:\\\\${path.split('\\\\').slice(1).join('\\\\')}\n`);
+        this.printTree(node, '');
+        this.print('\n');
+    }
+
+    printTree(node, prefix) {
+        const children = Object.entries(node.children || {});
+        children.forEach(([name, child], i) => {
+            const isLast = i === children.length - 1;
+            const connector = isLast ? '└── ' : '├── ';
+            const newPrefix = prefix + (isLast ? '    ' : '│   ');
+
+            if (child.type === 'dir') {
+                this.print(prefix + connector + name + '\n', 'info');
+                this.printTree(child, newPrefix);
+            } else {
+                this.print(prefix + connector + name + '\n');
+            }
+        });
+    }
+
+    cmdFormat(args) {
+        this.print('\n警告: 格式化将删除磁盘上的所有数据！\n', 'warning');
+        this.print('确认格式化吗? (Y/N): ');
+        this.awaitingFormatConfirm = true;
+    }
+
+    doFormat() {
+        this.print('正在检查现有磁盘格式...\n');
+        this.print('正在格式化 1.44M...\n');
+        for (let i = 0; i <= 100; i += 10) {
+            this.print(`格式化进度: ${i}%\n`);
+        }
+        this.print('格式化完成。\n', 'success');
+        this.print('磁盘总空间 1,457,664 字节\n');
+        this.awaitingFormatConfirm = false;
+    }
+
+    cmdMem(args) {
+        this.print(`\n内存信息:\n`);
+        this.print(`  常规内存总计:    640K\n`);
+        this.print(`  常规内存可用:    512K\n`);
+        this.print(`  扩展内存 (XMS):  16,384K\n`);
+        this.print(`  扩充内存 (EMS):  32,768K\n`);
+        this.print(`  上位内存块:      128K\n\n`);
+    }
+
+    cmdChkdsk(args) {
+        this.print(`\n正在检查磁盘 ${this.drive}: ...\n`);
+        this.print(`卷标: JA-DOS\n`);
+        this.print(`文件系统: FAT16\n`);
+        this.print(`总空间: 32,768K\n`);
+        this.print(`已用空间: 12,345K\n`);
+        this.print(`可用空间: 20,423K\n`);
+        this.print(`文件碎片: 0%\n`);
+        this.print(`磁盘状态: 良好\n\n`, 'success');
+    }
+
+    cmdVol(args) {
+        this.print(`\n 驱动器 ${this.drive}: 的卷标是 JA-DOS\n\n`);
+    }
+
+    cmdLabel(args) {
+        if (args.length === 0) {
+            this.print(`驱动器 ${this.drive}: 的卷标: JA-DOS\n`);
+        } else {
+            this.print(`卷标已更改为: ${args[0]}\n`, 'success');
+        }
+    }
+
+    cmdEdit(args) {
+        this.print('JA-DOS EDIT 编辑器 v1.0\n');
+        this.print('功能尚未实现。请使用 TYPE 查看文件。\n');
+    }
+
+    cmdExit(args) {
+        this.print('\n正在退出 JA-DOS...\n');
+        setTimeout(() => {
+            this.print('可以安全关闭电源了。\n');
+            this.print('Press any key to reboot...\n');
+            this.awaitingReboot = true;
+        }, 500);
+    }
+
+    // ========== 吃豆人游戏 ==========
+    cmdPacman(args) {
+        this.inGame = true;
+        this.pacmanGame.style.display = 'block';
+        this.print('\n正在启动 PACMAN...\n', 'success');
+        this.print('使用方向键或 WASD 移动 | Q 退出游戏\n\n');
+        this.startPacman();
+    }
+
+    startPacman() {
+        const canvas = this.pacmanCanvas;
+        const ctx = canvas.getContext('2d');
+        const cellSize = 20;
+        const cols = 28;
+        const rows = 31;
+
+        // 经典吃豆人迷宫 (1=墙, 0=豆子, 2=空, 3=能量豆, 4=门)
+        const maze = [
+            [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+            [1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1],
+            [1,0,1,1,1,1,0,1,1,1,1,1,0,1,1,0,1,1,1,1,1,0,1,1,1,1,0,1],
+            [1,3,1,1,1,1,0,1,1,1,1,1,0,1,1,0,1,1,1,1,1,0,1,1,1,1,3,1],
+            [1,0,1,1,1,1,0,1,1,1,1,1,0,1,1,0,1,1,1,1,1,0,1,1,1,1,0,1],
+            [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+            [1,0,1,1,1,1,0,1,1,0,1,1,1,1,1,1,1,1,0,1,1,0,1,1,1,1,0,1],
+            [1,0,1,1,1,1,0,1,1,0,1,1,1,1,1,1,1,1,0,1,1,0,1,1,1,1,0,1],
+            [1,0,0,0,0,0,0,1,1,0,0,0,0,1,1,0,0,0,0,1,1,0,0,0,0,0,0,1],
+            [1,1,1,1,1,1,0,1,1,1,1,1,2,1,1,2,1,1,1,1,1,0,1,1,1,1,1,1],
+            [2,2,2,2,2,1,0,1,1,2,2,2,2,2,2,2,2,2,2,1,1,0,1,2,2,2,2,2],
+            [1,1,1,1,1,1,0,1,1,2,1,1,1,4,4,1,1,1,2,1,1,0,1,1,1,1,1,1],
+            [2,2,2,2,2,2,0,2,2,2,1,2,2,2,2,2,2,1,2,2,2,0,2,2,2,2,2,2],
+            [1,1,1,1,1,1,0,1,1,2,1,2,2,2,2,2,2,1,2,1,1,0,1,1,1,1,1,1],
+            [2,2,2,2,2,1,0,1,1,2,1,1,1,1,1,1,1,1,2,1,1,0,1,2,2,2,2,2],
+            [1,1,1,1,1,1,0,1,1,2,2,2,2,2,2,2,2,2,2,1,1,0,1,1,1,1,1,1],
+            [1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1],
+            [1,0,1,1,1,1,0,1,1,1,1,1,0,1,1,0,1,1,1,1,1,0,1,1,1,1,0,1],
+            [1,0,1,1,1,1,0,1,1,1,1,1,0,1,1,0,1,1,1,1,1,0,1,1,1,1,0,1],
+            [1,3,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,0,3,1],
+            [1,1,1,0,1,1,0,1,1,0,1,1,1,1,1,1,1,1,0,1,1,0,1,1,0,1,1,1],
+            [1,1,1,0,1,1,0,1,1,0,1,1,1,1,1,1,1,1,0,1,1,0,1,1,0,1,1,1],
+            [1,0,0,0,0,0,0,1,1,0,0,0,0,1,1,0,0,0,0,1,1,0,0,0,0,0,0,1],
+            [1,0,1,1,1,1,1,1,1,1,1,1,0,1,1,0,1,1,1,1,1,1,1,1,1,1,0,1],
+            [1,0,1,1,1,1,1,1,1,1,1,1,0,1,1,0,1,1,1,1,1,1,1,1,1,1,0,1],
+            [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+            [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
+        ];
+
+        let pacman = { x: 14, y: 23, dir: 'left', mouth: 0, mouthDir: 1 };
+        let ghosts = [
+            { x: 13, y: 11, color: '#f00', dir: 'up', name: 'Blinky' },
+            { x: 14, y: 11, color: '#ffb8ff', dir: 'up', name: 'Pinky' },
+            { x: 13, y: 14, color: '#00ffff', dir: 'down', name: 'Inky' },
+            { x: 14, y: 14, color: '#ffb852', dir: 'down', name: 'Clyde' }
+        ];
+
+        let score = 0;
+        let lives = 3;
+        let gameOver = false;
+        let powerMode = false;
+        let powerTimer = 0;
+
+        // 复制迷宫用于豆子状态
+        let dots = maze.map(row => [...row]);
+
+        const drawMaze = () => {
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    const x = c * cellSize;
+                    const y = r * cellSize;
+
+                    if (maze[r][c] === 1) {
+                        ctx.fillStyle = '#2121de';
+                        ctx.fillRect(x + 1, y + 1, cellSize - 2, cellSize - 2);
+                    } else if (dots[r][c] === 0) {
+                        ctx.fillStyle = '#ffb897';
+                        ctx.beginPath();
+                        ctx.arc(x + cellSize/2, y + cellSize/2, 2, 0, Math.PI * 2);
+                        ctx.fill();
+                    } else if (dots[r][c] === 3) {
+                        ctx.fillStyle = powerMode && Math.floor(Date.now() / 100) % 2 ? '#fff' : '#ffb897';
+                        ctx.beginPath();
+                        ctx.arc(x + cellSize/2, y + cellSize/2, 5, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
+            }
+        };
+
+        const drawPacman = () => {
+            const x = pacman.x * cellSize + cellSize / 2;
+            const y = pacman.y * cellSize + cellSize / 2;
+
+            ctx.fillStyle = '#ff0';
+            ctx.beginPath();
+
+            let startAngle, endAngle;
+            pacman.mouth += pacman.mouthDir * 0.15;
+            if (pacman.mouth > 0.25) pacman.mouthDir = -1;
+            if (pacman.mouth < 0) pacman.mouthDir = 1;
+
+            const mouthOpen = pacman.mouth * Math.PI;
+
+            switch(pacman.dir) {
+                case 'right': startAngle = mouthOpen; endAngle = 2 * Math.PI - mouthOpen; break;
+                case 'left': startAngle = Math.PI + mouthOpen; endAngle = Math.PI - mouthOpen; break;
+                case 'up': startAngle = -Math.PI/2 + mouthOpen; endAngle = -Math.PI/2 - mouthOpen + 2*Math.PI; break;
+                case 'down': startAngle = Math.PI/2 + mouthOpen; endAngle = Math.PI/2 - mouthOpen; break;
+            }
+
+            ctx.arc(x, y, cellSize / 2 - 2, startAngle, endAngle);
+            ctx.lineTo(x, y);
+            ctx.fill();
+        };
+
+        const drawGhosts = () => {
+            ghosts.forEach(g => {
+                const x = g.x * cellSize + cellSize / 2;
+                const y = g.y * cellSize + cellSize / 2;
+
+                if (powerMode) {
+                    ctx.fillStyle = '#2121de';
+                } else {
+                    ctx.fillStyle = g.color;
+                }
+
+                // 身体
+                ctx.beginPath();
+                ctx.arc(x, y - 2, cellSize / 2 - 2, Math.PI, 0);
+                ctx.lineTo(x + cellSize / 2 - 2, y + cellSize / 2 - 2);
+                for (let i = 0; i < 4; i++) {
+                    const bx = x + cellSize / 2 - 2 - i * (cellSize / 3.5);
+                    ctx.lineTo(bx - cellSize / 7, y + cellSize / 2 - 5);
+                    ctx.lineTo(bx - cellSize / 3.5, y + cellSize / 2 - 2);
+                }
+                ctx.lineTo(x - cellSize / 2 + 2, y + cellSize / 2 - 2);
+                ctx.closePath();
+                ctx.fill();
+
+                // 眼睛
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.arc(x - 3, y - 4, 3, 0, Math.PI * 2);
+                ctx.arc(x + 3, y - 4, 3, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = '#00f';
+                ctx.beginPath();
+                ctx.arc(x - 3, y - 4, 1.5, 0, Math.PI * 2);
+                ctx.arc(x + 3, y - 4, 1.5, 0, Math.PI * 2);
+                ctx.fill();
+            });
+        };
+
+        const canMove = (x, y) => {
+            if (x < 0 || x >= cols || y < 0 || y >= rows) return false;
+            return maze[y][x] !== 1 && maze[y][x] !== 4;
+        };
+
+        const movePacman = () => {
+            let nx = pacman.x, ny = pacman.y;
+            switch(pacman.dir) {
+                case 'up': ny--; break;
+                case 'down': ny++; break;
+                case 'left': nx--; break;
+                case 'right': nx++; break;
+            }
+
+            // 隧道
+            if (nx < 0) nx = cols - 1;
+            if (nx >= cols) nx = 0;
+
+            if (canMove(nx, ny)) {
+                pacman.x = nx;
+                pacman.y = ny;
+
+                if (dots[ny][nx] === 0) {
+                    dots[ny][nx] = 2;
+                    score += 10;
+                } else if (dots[ny][nx] === 3) {
+                    dots[ny][nx] = 2;
+                    score += 50;
+                    powerMode = true;
+                    powerTimer = 300;
+                }
+            }
+        };
+
+        const moveGhosts = () => {
+            ghosts.forEach(g => {
+                const dirs = ['up', 'down', 'left', 'right'];
+                const validDirs = dirs.filter(d => {
+                    let nx = g.x, ny = g.y;
+                    switch(d) {
+                        case 'up': ny--; break;
+                        case 'down': ny++; break;
+                        case 'left': nx--; break;
+                        case 'right': nx++; break;
+                    }
+                    if (nx < 0) nx = cols - 1;
+                    if (nx >= cols) nx = 0;
+                    return canMove(nx, ny) && d !== opposite(g.dir);
+                });
+
+                if (validDirs.length > 0) {
+                    // 简单AI：有时朝pacman方向，有时随机
+                    if (Math.random() < 0.4) {
+                        g.dir = validDirs[Math.floor(Math.random() * validDirs.length)];
+                    } else {
+                        // 朝向pacman
+                        let bestDir = validDirs[0];
+                        let bestDist = Infinity;
+                        validDirs.forEach(d => {
+                            let nx = g.x, ny = g.y;
+                            switch(d) {
+                                case 'up': ny--; break;
+                                case 'down': ny++; break;
+                                case 'left': nx--; break;
+                                case 'right': nx++; break;
+                            }
+                            const dist = Math.abs(nx - pacman.x) + Math.abs(ny - pacman.y);
+                            if (dist < bestDist) {
+                                bestDist = dist;
+                                bestDir = d;
+                            }
+                        });
+                        g.dir = bestDir;
+                    }
+                }
+
+                let nx = g.x, ny = g.y;
+                switch(g.dir) {
+                    case 'up': ny--; break;
+                    case 'down': ny++; break;
+                    case 'left': nx--; break;
+                    case 'right': nx++; break;
+                }
+                if (nx < 0) nx = cols - 1;
+                if (nx >= cols) nx = 0;
+                if (canMove(nx, ny)) {
+                    g.x = nx;
+                    g.y = ny;
+                }
+            });
+        };
+
+        const opposite = (dir) => {
+            const opps = { up: 'down', down: 'up', left: 'right', right: 'left' };
+            return opps[dir];
+        };
+
+        const checkCollisions = () => {
+            ghosts.forEach((g, i) => {
+                if (Math.abs(g.x - pacman.x) < 1 && Math.abs(g.y - pacman.y) < 1) {
+                    if (powerMode) {
+                        score += 200;
+                        g.x = 13 + i % 2;
+                        g.y = 11 + Math.floor(i / 2);
+                    } else {
+                        lives--;
+                        if (lives <= 0) {
+                            gameOver = true;
+                        } else {
+                            pacman.x = 14;
+                            pacman.y = 23;
+                            ghosts.forEach((gg, j) => {
+                                gg.x = 13 + j % 2;
+                                gg.y = 11 + Math.floor(j / 2);
+                            });
+                        }
+                    }
+                }
+            });
+        };
+
+        const checkWin = () => {
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    if (dots[r][c] === 0 || dots[r][c] === 3) return false;
+                }
+            }
+            return true;
+        };
+
+        const updateUI = () => {
+            document.getElementById('score').textContent = score;
+            document.getElementById('lives').textContent = lives;
+        };
+
+        const gameLoop = () => {
+            if (!this.inGame || this.paused) return;
+
+            if (gameOver) {
+                ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = '#f00';
+                ctx.font = '40px monospace';
+                ctx.textAlign = 'center';
+                ctx.fillText('GAME OVER', canvas.width / 2, canvas.height / 2 - 20);
+                ctx.fillStyle = '#fff';
+                ctx.font = '20px monospace';
+                ctx.fillText(`最终分数: ${score}`, canvas.width / 2, canvas.height / 2 + 20);
+                ctx.fillText('按 R 重新开始 | 按 Q 退出', canvas.width / 2, canvas.height / 2 + 50);
+                return;
+            }
+
+            if (checkWin()) {
+                ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = '#0f0';
+                ctx.font = '40px monospace';
+                ctx.textAlign = 'center';
+                ctx.fillText('YOU WIN!', canvas.width / 2, canvas.height / 2 - 20);
+                ctx.fillStyle = '#fff';
+                ctx.font = '20px monospace';
+                ctx.fillText(`最终分数: ${score}`, canvas.width / 2, canvas.height / 2 + 20);
+                ctx.fillText('按 R 重新开始 | 按 Q 退出', canvas.width / 2, canvas.height / 2 + 50);
+                return;
+            }
+
+            movePacman();
+            moveGhosts();
+            checkCollisions();
+
+            if (powerMode) {
+                powerTimer--;
+                if (powerTimer <= 0) powerMode = false;
+            }
+
+            drawMaze();
+            drawGhosts();
+            drawPacman();
+            updateUI();
+
+            requestAnimationFrame(gameLoop);
+        };
+
+        // 控制
+        this.gameKeyHandler = (e) => {
+            if (!this.inGame) return;
+
+            const keyMap = {
+                'ArrowUp': 'up', 'w': 'up', 'W': 'up',
+                'ArrowDown': 'down', 's': 'down', 'S': 'down',
+                'ArrowLeft': 'left', 'a': 'left', 'A': 'left',
+                'ArrowRight': 'right', 'd': 'right', 'D': 'right'
+            };
+
+            if (keyMap[e.key]) {
+                e.preventDefault();
+                pacman.dir = keyMap[e.key];
+            }
+
+            if (e.key === 'q' || e.key === 'Q') {
+                this.inGame = false;
+                this.pacmanGame.style.display = 'none';
+                this.print('\n已退出 PACMAN。\n');
+                this.showPrompt();
+            }
+
+            if ((e.key === 'r' || e.key === 'R') && gameOver) {
+                // 重启
+                pacman = { x: 14, y: 23, dir: 'left', mouth: 0, mouthDir: 1 };
+                ghosts = [
+                    { x: 13, y: 11, color: '#f00', dir: 'up', name: 'Blinky' },
+                    { x: 14, y: 11, color: '#ffb8ff', dir: 'up', name: 'Pinky' },
+                    { x: 13, y: 14, color: '#00ffff', dir: 'down', name: 'Inky' },
+                    { x: 14, y: 14, color: '#ffb852', dir: 'down', name: 'Clyde' }
+                ];
+                score = 0;
+                lives = 3;
+                gameOver = false;
+                powerMode = false;
+                dots = maze.map(row => [...row]);
+                gameLoop();
+            }
+        };
+
+        document.addEventListener('keydown', this.gameKeyHandler);
+
+        // 开始游戏循环
+        gameLoop();
+    }
+
+    // ========== 辅助方法 ==========
+    resolvePath(path) {
+        if (path.includes(':')) return path;
+        if (path.startsWith('\\\\')) {
+            return `${this.drive}:\\\\${path.slice(1)}`;
+        }
+        if (this.currentDir.endsWith('\\\\')) {
+            return this.currentDir + path;
+        }
+        return this.currentDir + '\\\\' + path;
+    }
+
+    getNode(path) {
+        const parts = path.split('\\\\').filter(p => p);
+        if (parts.length === 0) return null;
+
+        let node = this.fs[parts[0]];
+        if (!node) return null;
+
+        for (let i = 1; i < parts.length; i++) {
+            if (!node.children || !node.children[parts[i]]) return null;
+            node = node.children[parts[i]];
+        }
+
+        return node;
+    }
+
+    getParentNode(path) {
+        const parts = path.split('\\\\').filter(p => p);
+        if (parts.length <= 1) return null;
+
+        const parentPath = parts.slice(0, -1).join('\\\\');
+        return this.getNode(parentPath);
+    }
+
+    colorize(text, color) {
+        const colors = {
+            red: '\u001b[31m', green: '\u001b[32m', yellow: '\u001b[33m',
+            blue: '\u001b[34m', magenta: '\u001b[35m', cyan: '\u001b[36m', white: '\u001b[37m'
+        };
+        return text;
+    }
+
+    // ========== 输出方法 ==========
+    print(text, className = '') {
+        const span = document.createElement('span');
+        span.className = 'output ' + className;
+
+        // 简单的 ANSI 颜色模拟
+        const lines = text.split('\n');
+        lines.forEach((line, i) => {
+            if (i > 0) span.appendChild(document.createElement('br'));
+
+            // 处理颜色代码
+            const colorMap = {
+                '\u001b[31m': 'c-red',
+                '\u001b[32m': 'c-green',
+                '\u001b[33m': 'c-yellow',
+                '\u001b[34m': 'c-blue',
+                '\u001b[35m': 'c-magenta',
+                '\u001b[36m': 'c-cyan',
+                '\u001b[37m': 'c-white'
+            };
+
+            let remaining = line;
+            while (remaining.length > 0) {
+                let found = false;
+                for (const [code, cls] of Object.entries(colorMap)) {
+                    if (remaining.startsWith(code)) {
+                        remaining = remaining.slice(code.length);
+                        found = true;
+                        break;
+                    }
+                }
+                if (found) continue;
+
+                const nextCode = Math.min(
+                    ...Object.keys(colorMap).map(c => {
+                        const idx = remaining.indexOf(c);
+                        return idx === -1 ? Infinity : idx;
+                    }).filter(v => v > 0)
+                );
+
+                const endPos = nextCode === Infinity ? remaining.length : nextCode;
+                const textNode = document.createTextNode(remaining.slice(0, endPos));
+                span.appendChild(textNode);
+                remaining = remaining.slice(endPos);
+            }
+        });
+
+        this.screen.appendChild(span);
+        this.scrollToBottom();
+    }
+
+    showPrompt() {
+        if (this.inGame) return;
+
+        const line = document.createElement('div');
+        line.className = 'prompt-line';
+
+        const promptSpan = document.createElement('span');
+        promptSpan.className = 'prompt';
+        promptSpan.textContent = this.currentDir + '>';
+        line.appendChild(promptSpan);
+
+        const inputArea = document.createElement('span');
+        inputArea.className = 'input-area';
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.id = 'cmdInput';
+        input.autocomplete = 'off';
+        input.spellcheck = false;
+
+        input.addEventListener('keydown', (e) => this.handleKeydown(e));
+        input.addEventListener('blur', () => setTimeout(() => input.focus(), 10));
+
+        inputArea.appendChild(input);
+        line.appendChild(inputArea);
+
+        this.screen.appendChild(line);
+        this.scrollToBottom();
+        input.focus();
+    }
+
+    handleKeydown(e) {
+        const input = e.target;
+
+        if (e.key === 'Enter') {
+            const cmd = input.value.trim();
+            input.disabled = true;
+            input.parentElement.previousElementSibling.textContent += ' ' + cmd;
+            input.remove();
+
+            if (cmd) {
+                this.commandHistory.push(cmd);
+                this.historyIndex = this.commandHistory.length;
+                this.executeCommand(cmd);
+            } else {
+                this.showPrompt();
+            }
+            return;
+        }
+
+        if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            if (this.historyIndex > 0) {
+                this.historyIndex--;
+                input.value = this.commandHistory[this.historyIndex];
+            }
+        }
+
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            if (this.historyIndex < this.commandHistory.length - 1) {
+                this.historyIndex++;
+                input.value = this.commandHistory[this.historyIndex];
+            } else {
+                this.historyIndex = this.commandHistory.length;
+                input.value = '';
+            }
+        }
+
+        if (e.key === 'Tab') {
+            e.preventDefault();
+            // 简单的自动补全
+            const parts = input.value.split(' ');
+            const lastPart = parts[parts.length - 1];
+            if (!lastPart) return;
+
+            const path = this.resolvePath(lastPart);
+            const parent = this.getParentNode(path) || this.getNode(this.currentDir);
+            const prefix = path.split('\\\\').pop().toLowerCase();
+
+            if (parent && parent.children) {
+                const matches = Object.keys(parent.children).filter(
+                    name => name.toLowerCase().startsWith(prefix)
+                );
+                if (matches.length === 1) {
+                    const fullPath = path.substring(0, path.lastIndexOf('\\\\') + 1) + matches[0];
+                    parts[parts.length - 1] = fullPath;
+                    input.value = parts.join(' ');
+                }
+            }
+        }
+    }
+
+    executeCommand(cmdLine) {
+        if (this.awaitingFormatConfirm) {
+            if (cmdLine.toUpperCase() === 'Y') {
+                this.doFormat();
+            } else {
+                this.print('格式化已取消。\n');
+                this.awaitingFormatConfirm = false;
+            }
+            this.showPrompt();
+            return;
+        }
+
+        if (this.awaitingReboot) {
+            this.screen.innerHTML = '';
+            this.awaitingReboot = false;
+            this.currentDir = 'C:\\\\JA-DOS';
+            this.drive = 'C';
+            this.boot();
+            return;
+        }
+
+        const parts = cmdLine.match(/[^\\s"]+|"[^"]*"/g) || [];
+        const cmd = parts[0].toLowerCase();
+        const args = parts.slice(1).map(a => a.replace(/^"|"$/g, ''));
+
+        if (this.commands[cmd]) {
+            this.commands[cmd](args);
+        } else {
+            // 尝试作为数学表达式直接计算
+            const expr = cmdLine.replace(/\^/g, '**');
+            if (/^[\d\s\+\-\*\/\%\^\(\)\.]+$/.test(expr)) {
+                try {
+                    const result = Function('"use strict"; return (' + expr + ')')();
+                    this.print(`${cmdLine} = ${result}\n`, 'success');
+                } catch (e) {
+                    this.print(`'${cmd}' 不是内部或外部命令，也不是可运行的程序或批处理文件。\n`, 'error');
+                }
+            } else {
+                this.print(`'${cmd}' 不是内部或外部命令，也不是可运行的程序或批处理文件。\n`, 'error');
+            }
+        }
+
+        if (!this.inGame && !this.awaitingFormatConfirm && !this.awaitingReboot) {
+            this.showPrompt();
+        }
+    }
+
+    scrollToBottom() {
+        this.screen.scrollTop = this.screen.scrollHeight;
+    }
+}
+
+// ========== 启动 ==========
+window.addEventListener('DOMContentLoaded', () => {
+    window.jados = new JADOS();
+});
+</script>
+</body>
+</html>
